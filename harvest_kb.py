@@ -1,6 +1,7 @@
 from sickle import Sickle
 from lxml import etree
-import re, requests, argparse, os, csv, sys, logging, hashlib, datetime
+import re, requests, argparse, os, csv, sys, logging, datetime
+#import hashlib
 
 logging.basicConfig(level=logging.INFO)
 csv.field_size_limit(sys.maxsize)
@@ -33,9 +34,9 @@ class kbScraper():
         if api_key: self.oai_url = self.oai_url + api_key
         self.folder = folder
 
-    def hash_id(self, set, from_date, to_date, publishers):
-        hash_string = str(set) + str(from_date) + str(to_date) + '_'.join(publishers)
-        return hashlib.sha1(hash_string.encode('UTF-8')).hexdigest()[:10]
+    #def hash_id(self, set, from_date, to_date, publishers):
+    #    hash_string = str(set) + str(from_date) + str(to_date) + '_'.join(publishers)
+    #    return hashlib.sha1(hash_string.encode('UTF-8')).hexdigest()[:10]
 
     def parse_source_meta(self, elem):
         meta_node = elem.find('.//srw_dc:dcx', XML_NAMESPACES)
@@ -88,10 +89,12 @@ class kbScraper():
         return d
 
     def get_records(self, set, from_date, to_date, publishers, download=True):
-        fname_id = self.hash_id(set, from_date, to_date, publishers) ## use hash for unique file per query
-        fname = os.path.join(self.folder, 'KB_' + fname_id + '_RAW_RECORDS.csv')
+        #fname_id = self.hash_id(set, from_date, to_date, publishers) ## use hash for unique file per query
+        fname = os.path.join(self.folder, 'KB_META_' + set + '.csv')
 
         if download:
+            logging.info('Checking / updating index')
+            self.build_index(set)
             logging.info('Downloading meta data')
             self.download_records(fname, set, from_date, to_date, publishers)
 
@@ -106,37 +109,49 @@ class kbScraper():
                     yield record_xml
 
 
+    def build_index(self, set):
+        fname = os.path.join(self.folder, 'KB_INDEX_' + set + '.csv')
+        w, f, in_index = create_or_append_csv(fname, colnames = ['identifier','date','publisher'], done_field='identifier')
 
-
-    def download_records(self, fname, set, from_date, to_date, publishers):
-        w, f, done_ids = create_or_append_csv(fname, colnames=['id', 'date','publisher', 'selected', 'record_xml'], done_field='id')
         sickle = Sickle(self.oai_url)
-        headers = sickle.ListIdentifiers(metadataPrefix='didl', ignore_deleted=True, set=set, **{"from": from_date})
-
-        print(done_ids)
+        headers = sickle.ListIdentifiers(metadataPrefix='didl', ignore_deleted=True, set=set)
 
         i = 0
         for h in headers:
             i += 1
-            #if i == 10: break  ## only for testing
-            if i % 100 == 0: logging.info('\t' + str(i))
-            if h.identifier in done_ids: continue
+            if h.identifier in in_index: continue
+            if i % 1000 == 0: logging.info('\tupdating index: ' + str(i))
             record = sickle.GetRecord(identifier=h.identifier, metadataPrefix='didl')
-
-            ## get newspaper / issue meta
             record_xml = etree.fromstring(record.raw)
             top_node = record_xml.find('.//didl:DIDL/didl:Item', XML_NAMESPACES)
             top_list = top_node.getchildren()
             source_meta = self.parse_source_meta(top_list[0])
-            date = datetime.datetime.strptime(source_meta['date'], '%Y-%m-%d')
-            publisher = source_meta.get('publisher_alt', 'MISSING')
+            w.writerow([h.identifier,
+                        source_meta.get('date'),
+                        source_meta.get('publisher_alt', 'MISSING')])
 
-            if date > from_date and date < to_date and publisher in publishers:
-                w.writerow([h.identifier, date, publisher, 1, record.raw])
-            else:
-                w.writerow([h.identifier, date, publisher, 0, None])
+    def download_records(self, fname, set, from_date, to_date, publishers):
+        w, f, done_ids = create_or_append_csv(fname, colnames=['id', 'date','publisher', 'record_xml'], done_field='id')
 
-        f.close()
+        index_fname = os.path.join(self.folder, 'KB_INDEX_' + set + '.csv')
+        with open(index_fname, 'r') as csvfile:
+            i = 0
+            for l in csv.DictReader(csvfile):
+
+                i += 1
+                #if i == 10: break  ## only for testing
+                if i % 100 == 0: logging.info('\t' + str(i))
+
+                date = datetime.datetime.strptime(l['date'], '%Y-%m-%d')
+                if date >= from_date and date <= to_date and l['publisher'] in publishers:
+                    if l['identifier'] in done_ids: continue
+                    record = sickle.GetRecord(identifier=l['identifier'], metadataPrefix='didl')
+                    w.writerow([l['identifier'], date, l['publisher'], record.raw])
+
+
+
+            f.close()
+
 
     def get_articles(self, record_xml, done_urls):
         #logging.info('Parsing articles and downloading OCR text')
@@ -164,8 +179,8 @@ class kbScraper():
                 yield article
 
     def scrape(self, set, from_date, to_date, publishers, download=True, done_urls=[]):
-        fname_id = self.hash_id(set, from_date, to_date, publishers) ## use hash for unique file per query
-        fname = os.path.join(self.folder, 'KB_' + fname_id + '.csv')
+        #fname_id = self.hash_id(set, from_date, to_date, publishers) ## use hash for unique file per query
+        fname = os.path.join(self.folder, 'KB_ARTICLES_' + set + '.csv')
         cols = ['publisher', 'publisher_alt', 'date', 'volume_int',
                 'issuenumber_int', 'issue_url', 'page_int', 'url', 'title', 'text']
         w, f, done_urls = create_or_append_csv(fname, cols, done_field='url')
