@@ -54,6 +54,7 @@ class kbScraper():
                 text = ''
             else:
                 text = metafield.text.strip()
+            
 
             if key == 'title':
                 d['publisher'] = text
@@ -64,9 +65,13 @@ class kbScraper():
                 if len(metafield.attrib) == 0:
                     d['issue_url'] = text
             if key == 'volume':
-                d['volume_int'] = int(text.split()[0])
+                volume = text.split()[0] if text != '' else ''
+                volume = re.sub('[\D].*','', volume)
+                d['volume_int'] = int(volume) if volume != '' else ''
             if key == 'issuenumber':
-                d['issuenumber_int'] = int(text.split()[0])
+                issue = text.split()[0] if text != '' else ''
+                issue = re.sub('[\D].*','', issue)
+                d['issuenumber_int'] = int(issue) if issue != '' else ''
             if key == 'date':
                 d['date'] = text
         return d
@@ -165,7 +170,7 @@ class kbScraper():
                     #logging.info('date is ' + h.datestamp)
                 continue
 
-            if i % 1000 == 0: logging.info('\tupdating index: ' + str(i))
+            if i % 100 == 0: logging.info('\tupdating index: ' + str(i))
             record = sickle.GetRecord(identifier=h.identifier, metadataPrefix='didl')
             record_xml = etree.fromstring(record.raw)
             top_node = record_xml.find('.//didl:DIDL/didl:Item', XML_NAMESPACES)
